@@ -1,0 +1,7 @@
+/target
+/out
+.cargo/config.toml
+magisk_module/aether-optext
+*.swp
+*~
+.DS_Store
