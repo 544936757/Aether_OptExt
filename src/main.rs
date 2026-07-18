@@ -87,6 +87,7 @@ fn main() {
 
     // eBPF
     let bpf = bpf::probe(cfg.ebpf);
+    if bpf.ok { info!("eBPF: 可用"); }
 
     let _ = fs::create_dir_all("/sdcard/Android/Aether");
 
