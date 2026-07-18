@@ -36,16 +36,27 @@ fn cpuset_add(tid: i32, cpus: &str) {
 
 pub fn scan(rules: &[Rule], set: &HashSet<String>, wild: &[String]) -> Vec<(i32, String, Vec<(i32, String, String)>)> {
     let mut result = Vec::new();
-    let dir = match fs::read_dir("/proc") { Ok(d) => d, Err(_) => return result };
-    for entry in dir.flatten() {
-        let pid: i32 = match entry.file_name().to_string_lossy().parse() { Ok(p) => p, Err(_) => continue };
-        if pid < 1000 { continue; }
-        let cl = fs::read_to_string(entry.path().join("cmdline")).unwrap_or_default();
-        let pkg = cl.split('\0').next().unwrap_or("").trim_end_matches('\0').to_string();
+    let mut buf = [0i8; 8192];
+    let fd = unsafe { libc::open("/proc\0".as_ptr() as *const _, libc::O_RDONLY | libc::O_DIRECTORY) };
+    if fd < 0 { return result; }
+    loop {
+        let n = unsafe { libc::syscall(libc::SYS_getdents64, fd, buf.as_mut_ptr(), buf.len()) };
+        if n <= 0 { break; }
+        let mut off = 0usize;
+        while off < n as usize {
+            let rec = u16::from_ne_bytes(buf[off+16..off+18].try_into().unwrap_or([0;2])) as usize;
+            let ino = u64::from_ne_bytes(buf[off..off+8].try_into().unwrap_or([0;8]));
+            if rec < 19 || ino == 0 { off += rec; continue; }
+            let name = std::str::from_utf8(&buf[off+19..off+rec-1]).unwrap_or("");
+            off += rec;
+            let pid: i32 = match name.parse() { Ok(p) => p, Err(_) => continue };
+            if pid < 1000 { continue; }
+            let cl = fs::read_to_string(format!("/proc/{}/cmdline", pid)).unwrap_or_default();
+            let pkg = cl.split('\0').next().unwrap_or("").trim_end_matches('\0').to_string();
         if pkg.is_empty() { continue; }
         if !set.contains(&pkg) && !wild.iter().any(|w| fnmatch(w, &pkg)) { continue; }
         let mut th = Vec::new();
-        if let Ok(tk) = fs::read_dir(entry.path().join("task")) {
+        if let Ok(tk) = fs::read_dir(format!("/proc/{}/task", pid)) {
             for t in tk.flatten() {
                 let tid: i32 = t.file_name().to_string_lossy().parse().unwrap_or(0);
                 let comm = fs::read_to_string(t.path().join("comm")).unwrap_or_default().trim().to_string();
@@ -62,7 +73,9 @@ pub fn scan(rules: &[Rule], set: &HashSet<String>, wild: &[String]) -> Vec<(i32,
         }
         if th.is_empty() { continue; }
         result.push((pid, pkg, th));
+        }
     }
+    unsafe { libc::close(fd); }
     result
 }
 
