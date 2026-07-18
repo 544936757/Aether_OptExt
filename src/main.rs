@@ -76,21 +76,24 @@ fn main() {
     process::init_cpuset();
 
     // 自身限定在小核运行
-    let self_pid = std::process::id() as i32;
-    let mut set: libc::cpu_set_t = unsafe { std::mem::zeroed() };
-    unsafe { libc::CPU_ZERO(&mut set); }
-    for part in little.split(',') {
-        let part = part.trim();
-        if part.is_empty() { continue; }
-        if let Some((s, e)) = part.split_once('-') {
-            let start: usize = s.parse().unwrap_or(0);
-            let end: usize = e.parse().unwrap_or(start);
-            for cpu in start..=end { unsafe { libc::CPU_SET(cpu, &mut set); } }
-        } else if let Ok(cpu) = part.parse::<usize>() {
-            unsafe { libc::CPU_SET(cpu, &mut set); }
+    if !little.is_empty() && little != "0" {
+        let self_pid = std::process::id() as i32;
+        let mut set: libc::cpu_set_t = unsafe { std::mem::zeroed() };
+        unsafe { libc::CPU_ZERO(&mut set); }
+        for part in little.split(',') {
+            let part = part.trim();
+            if part.is_empty() { continue; }
+            if let Some((s, e)) = part.split_once('-') {
+                let start: usize = s.parse().unwrap_or(0);
+                let end: usize = e.parse().unwrap_or(start);
+                for cpu in start..=end { unsafe { libc::CPU_SET(cpu, &mut set); } }
+            } else if let Ok(cpu) = part.parse::<usize>() {
+                unsafe { libc::CPU_SET(cpu, &mut set); }
+            }
         }
+        let r = unsafe { libc::sched_setaffinity(self_pid, std::mem::size_of::<libc::cpu_set_t>(), &set) };
+        if r != 0 { info!("自身绑核跳过 (errno={})", std::io::Error::last_os_error().raw_os_error().unwrap_or(0)); }
     }
-    unsafe { libc::sched_setaffinity(self_pid, std::mem::size_of::<libc::cpu_set_t>(), &set); }
 
     // eBPF
     let bpf = bpf::probe(cfg.ebpf);
